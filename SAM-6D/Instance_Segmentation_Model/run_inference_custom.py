@@ -32,6 +32,7 @@ from utils.bbox_utils import CropResizePad
 from model.utils import Detections, convert_npz_to_json
 from model.loss import Similarity
 from utils.inout import load_json, save_json_bop23
+from utils.bbox_utils import force_binary_mask
 
 inv_rgb_transform = T.Compose(
         [
@@ -64,6 +65,44 @@ def visualize(rgb, detections, save_path="tmp.png"):
     r = int(255*colors[temp_id][0])
     g = int(255*colors[temp_id][1])
     b = int(255*colors[temp_id][2])
+    img[mask, 0] = alpha*r + (1 - alpha)*img[mask, 0]
+    img[mask, 1] = alpha*g + (1 - alpha)*img[mask, 1]
+    img[mask, 2] = alpha*b + (1 - alpha)*img[mask, 2]   
+    img[edge, :] = 255
+    
+    img = Image.fromarray(np.uint8(img))
+    img.save(save_path)
+    prediction = Image.open(save_path)
+    
+    # concat side by side in PIL
+    img = np.array(img)
+    concat = Image.new('RGB', (img.shape[1] + prediction.size[0], img.shape[0]))
+    concat.paste(rgb, (0, 0))
+    concat.paste(prediction, (img.shape[1], 0))
+    return concat
+
+def visualize_one(rgb, mask, save_path="tmp.png"):
+    img = rgb.copy()
+    gray = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2GRAY)
+    img = cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
+    colors = distinctipy.get_colors(1)
+    alpha = 0.33
+
+    #best_score = 0.
+    # for mask_idx, det in enumerate(detections):
+    #     if best_score < det['score']:
+    #         best_score = det['score']
+    #         best_det = detections[mask_idx]
+
+    # mask = rle_to_mask(best_det["segmentation"])
+    edge = canny(mask)
+    edge = binary_dilation(edge, np.ones((2, 2)))
+    # obj_id = best_det["category_id"]
+    # temp_id = obj_id - 1
+
+    r = int(255*colors[0][0])
+    g = int(255*colors[0][1])
+    b = int(255*colors[0][2])
     img[mask, 0] = alpha*r + (1 - alpha)*img[mask, 0]
     img[mask, 1] = alpha*g + (1 - alpha)*img[mask, 1]
     img[mask, 2] = alpha*b + (1 - alpha)*img[mask, 2]   
@@ -158,6 +197,9 @@ def run_inference(segmentor_model, output_dir, cad_path, rgb_path, depth_path, c
                     templates, masks_cropped[:, 0, :, :]
                 ).unsqueeze(0).data
     
+    print ('Inference starting')
+    start_time = time.time()
+
     # run inference
     rgb = Image.open(rgb_path).convert("RGB")
     detections = model.segmentor_model.generate_masks(np.array(rgb))
@@ -203,14 +245,33 @@ def run_inference(segmentor_model, output_dir, cad_path, rgb_path, depth_path, c
     detections.add_attribute("object_ids", torch.zeros_like(final_score))   
          
     detections.to_numpy()
+    top5_idxs = np.argsort(detections.scores)[-5:][::-1]
+    print ('Inference finished')
+    print ('Time taken:', time.time()-start_time)
     save_path = f"{output_dir}/sam6d_results/detection_ism"
-    detections.save_to_file(0, 0, 0, save_path, "Custom", return_results=False)
-    detections = convert_npz_to_json(idx=0, list_npz_paths=[save_path+".npz"])
-    detections = sorted(detections, key=lambda x: x['score'], reverse=True)
-    save_json_bop23(save_path+".json", detections)
-    for i, det in enumerate(detections):
-        vis_img = visualize(rgb, [det], f"{output_dir}/sam6d_results/vis_ism_{i}.png")
-        vis_img.save(f"{output_dir}/sam6d_results/vis_ism_{i}.png")
+    for i, idx in enumerate(top5_idxs):
+        binary_mask = force_binary_mask(detections.masks[idx]).astype(np.uint8)
+        mask_save_path = f"{save_path}_mask_{i}.png"
+        Image.fromarray(binary_mask * 255).save(mask_save_path)
+
+        inverted_mask = 1 - binary_mask
+        inverted_mask_color = cv2.cvtColor(inverted_mask * 255, cv2.COLOR_GRAY2RGB)
+        overlay = cv2.addWeighted(np.array(rgb), 1, inverted_mask_color, 0.8, 0)
+        overlay_save_path = f"{save_path}_overlay_{i}.png"
+        Image.fromarray(overlay).save(overlay_save_path)
+
+
+        # vis_img = visualize_one(rgb, binary_mask, f"{save_path}_{i}.png")
+        # vis_img.save(f"{save_path}_{i}.png")
+
+    #detections.save_to_file(0, 0, 0, save_path, "Custom", return_results=False)
+    #detections = convert_npz_to_json(idx=0, list_npz_paths=[save_path+".npz"])
+    #detections = sorted(detections, key=lambda x: x['score'], reverse=True)
+    #save_json_bop23(save_path+".json", detections)
+    # for i, det in enumerate(detections[:5]):
+    #     print('Saving mask:', i)
+    #     vis_img = visualize(rgb, [det], f"{output_dir}/sam6d_results/vis_ism_{i}.png")
+    #     vis_img.save(f"{output_dir}/sam6d_results/vis_ism_{i}.png")
     
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
