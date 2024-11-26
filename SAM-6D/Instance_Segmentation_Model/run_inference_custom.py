@@ -206,9 +206,11 @@ def run_inference(segmentor_model, output_dir, cad_path, rgb_path, depth_path, c
     save_path = f"{output_dir}/sam6d_results/detection_ism"
     detections.save_to_file(0, 0, 0, save_path, "Custom", return_results=False)
     detections = convert_npz_to_json(idx=0, list_npz_paths=[save_path+".npz"])
+    detections = sorted(detections, key=lambda x: x['score'], reverse=True)
     save_json_bop23(save_path+".json", detections)
-    vis_img = visualize(rgb, detections, f"{output_dir}/sam6d_results/vis_ism.png")
-    vis_img.save(f"{output_dir}/sam6d_results/vis_ism.png")
+    for i, det in enumerate(detections):
+        vis_img = visualize(rgb, [det], f"{output_dir}/sam6d_results/vis_ism_{i}.png")
+        vis_img.save(f"{output_dir}/sam6d_results/vis_ism_{i}.png")
     
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

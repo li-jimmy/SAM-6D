@@ -64,7 +64,6 @@ def run_inference(cfg: DictConfig):
     else:
         raise NotImplementedError
     model.ref_dataset = ref_dataset
-
     segmentation_name = cfg.model.segmentor_model._target_.split(".")[-1]
     agg_function = cfg.model.matching_config.aggregation_function
     rendering_type = cfg.model.onboarding_config.rendering_type
