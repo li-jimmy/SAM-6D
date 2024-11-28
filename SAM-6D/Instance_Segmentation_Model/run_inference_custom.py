@@ -162,7 +162,7 @@ def run_inference(segmentor_model, output_dir, cad_path, rgb_path, depth_path, c
         
     
     logging.info("Initializing template")
-    template_dir = os.path.join(output_dir, 'templates')
+    template_dir = args.template_path
     num_templates = len(glob.glob(f"{template_dir}/*.npy"))
     boxes, masks, templates = [], [], []
     for idx in range(num_templates):
@@ -260,9 +260,14 @@ def run_inference(segmentor_model, output_dir, cad_path, rgb_path, depth_path, c
         overlay_save_path = f"{save_path}_overlay_{i}.png"
         Image.fromarray(overlay).save(overlay_save_path)
 
-
         # vis_img = visualize_one(rgb, binary_mask, f"{save_path}_{i}.png")
         # vis_img.save(f"{save_path}_{i}.png")
+
+        # Save the best mask, to be used downstream
+        if i == 0:
+            print('Copying best mask to', args.rgb_path.replace('_color', '_mask'))
+            shutil.copy(mask_save_path, args.rgb_path.replace('_color', '_mask'))
+
 
     #detections.save_to_file(0, 0, 0, save_path, "Custom", return_results=False)
     #detections = convert_npz_to_json(idx=0, list_npz_paths=[save_path+".npz"])
@@ -280,6 +285,7 @@ if __name__ == "__main__":
     parser.add_argument("--cad_path", nargs="?", help="Path to CAD(mm)")
     parser.add_argument("--rgb_path", nargs="?", help="Path to RGB image")
     parser.add_argument("--depth_path", nargs="?", help="Path to Depth image(mm)")
+    parser.add_argument("--template_path", help="Path to templates")
     parser.add_argument("--cam_path", nargs="?", help="Path to camera information")
     parser.add_argument("--stability_score_thresh", default=0.97, type=float, help="stability_score_thresh of SAM")
     args = parser.parse_args()
