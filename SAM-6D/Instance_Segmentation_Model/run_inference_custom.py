@@ -222,34 +222,42 @@ def run_inference(segmentor_model, output_dir, cad_path, rgb_path, depth_path, c
     appe_scores, ref_aux_descriptor= model.compute_appearance_score(best_template, pred_idx_objects, query_appe_descriptors)
 
     # compute the geometric score
-    batch = batch_input_data(depth_path, cam_path, device)
-    template_poses = get_obj_poses_from_template_level(level=2, pose_distribution="all")
-    template_poses[:, :3, 3] *= 0.4
-    poses = torch.tensor(template_poses).to(torch.float32).to(device)
-    model.ref_data["poses"] =  poses[load_index_level_in_level2(0, "all"), :, :]
+    # batch = batch_input_data(depth_path, cam_path, device)
+    # template_poses = get_obj_poses_from_template_level(level=2, pose_distribution="all")
+    # template_poses[:, :3, 3] *= 0.4
+    # poses = torch.tensor(template_poses).to(torch.float32).to(device)
+    # model.ref_data["poses"] =  poses[load_index_level_in_level2(0, "all"), :, :]
 
-    mesh = trimesh.load_mesh(cad_path)
-    model_points = mesh.sample(2048).astype(np.float32) / 1000.0
-    model.ref_data["pointcloud"] = torch.tensor(model_points).unsqueeze(0).data.to(device)
-    
-    image_uv = model.project_template_to_image(best_template, pred_idx_objects, batch, detections.masks)
+    # mesh = trimesh.load_mesh(cad_path)
+    # model_points = mesh.sample(2048).astype(np.float32) / 1000.0
+    # model.ref_data["pointcloud"] = torch.tensor(model_points).unsqueeze(0).data.to(device)
+    detections.masks.squeeze_()
+    #image_uv = model.project_template_to_image(best_template, pred_idx_objects, batch, detections.masks)
 
-    geometric_score, visible_ratio = model.compute_geometric_score(
-        image_uv, detections, query_appe_descriptors, ref_aux_descriptor, visible_thred=model.visible_thred
-        )
+    # geometric_score, visible_ratio = model.compute_geometric_score(
+    #     image_uv, detections, query_appe_descriptors, ref_aux_descriptor, visible_thred=model.visible_thred
+    #     )
+    visible_ratio = model.compute_visible_ratio(query_appe_descriptors, ref_aux_descriptor, visible_thred=model.visible_thred)
 
     # final score
-    final_score = (semantic_score + appe_scores + geometric_score*visible_ratio) / (1 + 1 + visible_ratio)
+    #final_score = (semantic_score + appe_scores + geometric_score*visible_ratio) / (1 + 1 + visible_ratio)
+    final_score = (semantic_score + appe_scores) * visible_ratio
 
     detections.add_attribute("scores", final_score)
     detections.add_attribute("object_ids", torch.zeros_like(final_score))   
-         
+    
+    detections.add_attribute("semantic_score", semantic_score)
+    detections.add_attribute("appe_scores", appe_scores)
+    #detections.add_attribute("geometric_score", geometric_score)
+    detections.add_attribute("visible_ratio", visible_ratio)
+
     detections.to_numpy()
     top5_idxs = np.argsort(detections.scores)[-5:][::-1]
     print ('Inference finished')
     print ('Time taken:', time.time()-start_time)
     save_path = f"{output_dir}/sam6d_results/detection_ism"
     for i, idx in enumerate(top5_idxs):
+        print('Idx', idx)
         binary_mask = force_binary_mask(detections.masks[idx]).astype(np.uint8)
         mask_save_path = f"{save_path}_mask_{i}.png"
         Image.fromarray(binary_mask * 255).save(mask_save_path)
@@ -260,6 +268,12 @@ def run_inference(segmentor_model, output_dir, cad_path, rgb_path, depth_path, c
         overlay_save_path = f"{save_path}_overlay_{i}.png"
         Image.fromarray(overlay).save(overlay_save_path)
 
+        print(' - Score', detections.scores[idx])
+        print(' - Semantic score', detections.semantic_score[idx])
+        print(' - Appearance score', detections.appe_scores[idx])
+        #print(' - Geometric score', detections.geometric_score[idx])
+        print(' - Visible ratio', detections.visible_ratio[idx])
+
         # vis_img = visualize_one(rgb, binary_mask, f"{save_path}_{i}.png")
         # vis_img.save(f"{save_path}_{i}.png")
 
@@ -269,14 +283,13 @@ def run_inference(segmentor_model, output_dir, cad_path, rgb_path, depth_path, c
             shutil.copy(mask_save_path, args.rgb_path.replace('_color', '_mask'))
 
 
-    #detections.save_to_file(0, 0, 0, save_path, "Custom", return_results=False)
-    #detections = convert_npz_to_json(idx=0, list_npz_paths=[save_path+".npz"])
-    #detections = sorted(detections, key=lambda x: x['score'], reverse=True)
-    #save_json_bop23(save_path+".json", detections)
-    # for i, det in enumerate(detections[:5]):
-    #     print('Saving mask:', i)
-    #     vis_img = visualize(rgb, [det], f"{output_dir}/sam6d_results/vis_ism_{i}.png")
-    #     vis_img.save(f"{output_dir}/sam6d_results/vis_ism_{i}.png")
+    # detections.save_to_file(0, 0, 0, save_path, "Custom", return_results=False)
+    # detections = convert_npz_to_json(idx=0, list_npz_paths=[save_path+".npz"])
+    # detections = sorted(detections, key=lambda x: x['score'], reverse=True)
+    # save_json_bop23(save_path+".json", detections)
+    # vis_img = visualize(rgb, detections, f"{output_dir}/sam6d_results/vis_ism.png")
+    # vis_img.save(f"{output_dir}/sam6d_results/vis_ism.png")
+
     
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

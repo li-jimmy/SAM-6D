@@ -321,6 +321,11 @@ class Instance_Segmentation_Model(pl.LightningModule):
 
         return iou, visible_ratio
 
+    def compute_visible_ratio(self, appe_descriptors, ref_aux_descriptor, visible_thred=0.5):
+        aux_metric = MaskedPatch_MatrixSimilarity(metric="cosine", chunk_size=64)
+        visible_ratio = aux_metric.compute_visible_ratio(appe_descriptors, ref_aux_descriptor, visible_thred)
+        return visible_ratio
+
     def test_step(self, batch, idx):
         if idx == 0:
             os.makedirs(
