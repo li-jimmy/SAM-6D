@@ -17,7 +17,7 @@ args = parser.parse_args()
 # set the cnos camera path
 render_dir = os.path.dirname(os.path.abspath(__file__))
 cnos_cam_fpath = os.path.join(render_dir, '../Instance_Segmentation_Model/utils/poses/predefined_poses/cam_poses_level0.npy')
-cnos_cam_fpath = os.path.join(render_dir, '../Instance_Segmentation_Model/utils/poses/predefined_poses/cam_poses_level1.npy')
+# cnos_cam_fpath = os.path.join(render_dir, '../Instance_Segmentation_Model/utils/poses/predefined_poses/cam_poses_level1.npy')
 #cnos_cam_fpath = os.path.join(render_dir, '../Instance_Segmentation_Model/utils/poses/predefined_poses/cam_poses_level2.npy')
 bproc.init()
 
@@ -44,36 +44,43 @@ if args.normalize:
 else:
     scale = 1
 
+bproc.clean_up()
+
+# load object
+obj = bproc.loader.load_obj(args.cad_path)[0]
+obj.set_scale([scale, scale, scale])
+obj.set_cp("category_id", 1)
+
+# assigning material colors to untextured objects
+if args.colorize:
+    color = [args.base_color, args.base_color, args.base_color, 0.]
+    material = bproc.material.create('obj')
+    material.set_principled_shader_value('Base Color', color)
+    obj.set_material(0, material)
+
+
+# set light
+light_scale = 2.5
+light_energy = 1000
+light1 = bproc.types.Light()
+light1.set_type("POINT")
+light1.set_energy(light_energy)
+
+bproc.renderer.set_max_amount_of_samples(50)
+
 for idx, cam_pose in enumerate(cam_poses):
-    
-    bproc.clean_up()
-
-    # load object
-    obj = bproc.loader.load_obj(args.cad_path)[0]
-    obj.set_scale([scale, scale, scale])
-    obj.set_cp("category_id", 1)
-
-    # assigning material colors to untextured objects
-    if args.colorize:
-        color = [args.base_color, args.base_color, args.base_color, 0.]
-        material = bproc.material.create('obj')
-        material.set_principled_shader_value('Base Color', color)
-        obj.set_material(0, material)
-
     # convert cnos camera poses to blender camera poses
     cam_pose[:3, 1:3] = -cam_pose[:3, 1:3]
     cam_pose[:3, -1] = cam_pose[:3, -1] * 0.001 * 2
-    bproc.camera.add_camera_pose(cam_pose)
+    bproc.camera.add_camera_pose(cam_pose, frame=0)
     
-    # set light
-    light_scale = 2.5
-    light_energy = 1000
-    light1 = bproc.types.Light()
-    light1.set_type("POINT")
-    light1.set_location([light_scale*cam_pose[:3, -1][0], light_scale*cam_pose[:3, -1][1], light_scale*cam_pose[:3, -1][2]])
-    light1.set_energy(light_energy)
+    print("Cam pose")
+    print(cam_pose)
 
-    bproc.renderer.set_max_amount_of_samples(50)
+
+    light1.set_location([light_scale*cam_pose[:3, -1][0], light_scale*cam_pose[:3, -1][1], light_scale*cam_pose[:3, -1][2]])
+    
+
     # render the whole pipeline
     data = bproc.renderer.render()
     # render nocs

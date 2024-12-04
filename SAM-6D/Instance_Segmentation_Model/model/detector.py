@@ -295,7 +295,7 @@ class Instance_Segmentation_Model(pl.LightningModule):
 
         return idx_selected_proposals, pred_idx_objects, semantic_score, best_template
 
-    def compute_appearance_score(self, best_pose, pred_objects_idx, qurey_appe_descriptors):
+    def compute_appearance_score(self, best_pose, pred_objects_idx, query_appe_descriptors):
         """
         Based on the best template, calculate appearance similarity indicated by appearance score
         """
@@ -303,7 +303,7 @@ class Instance_Segmentation_Model(pl.LightningModule):
         ref_appe_descriptors = self.ref_data["appe_descriptors"][con_idx[0, ...], con_idx[1, ...], ...] # N_query x N_patch x N_feature
 
         aux_metric = MaskedPatch_MatrixSimilarity(metric="cosine", chunk_size=64)
-        appe_scores = aux_metric.compute_straight(qurey_appe_descriptors, ref_appe_descriptors)
+        appe_scores = aux_metric.compute_straight(query_appe_descriptors, ref_appe_descriptors)
 
         return appe_scores, ref_appe_descriptors
 

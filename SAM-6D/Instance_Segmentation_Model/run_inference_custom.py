@@ -26,7 +26,7 @@ import distinctipy
 from skimage.feature import canny
 from skimage.morphology import binary_dilation
 from segment_anything.utils.amg import rle_to_mask
-
+from model.detector import Instance_Segmentation_Model
 from utils.poses.pose_utils import get_obj_poses_from_template_level, load_index_level_in_level2
 from utils.bbox_utils import CropResizePad
 from model.utils import Detections, convert_npz_to_json
@@ -146,7 +146,7 @@ def run_inference(segmentor_model, output_dir, cad_path, rgb_path, depth_path, c
         raise ValueError("The segmentor_model {} is not supported now!".format(segmentor_model))
 
     logging.info("Initializing model")
-    model = instantiate(cfg.model)
+    model: Instance_Segmentation_Model = instantiate(cfg.model)
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.descriptor_model.model = model.descriptor_model.model.to(device)
@@ -162,8 +162,10 @@ def run_inference(segmentor_model, output_dir, cad_path, rgb_path, depth_path, c
         
     
     logging.info("Initializing template")
+    start_time = time.time()
     template_dir = args.template_path
     num_templates = len(glob.glob(f"{template_dir}/*.npy"))
+    print(' - Num templates:', num_templates)
     boxes, masks, templates = [], [], []
     for idx in range(num_templates):
         image = Image.open(os.path.join(template_dir, 'rgb_'+str(idx)+'.png'))
@@ -197,6 +199,8 @@ def run_inference(segmentor_model, output_dir, cad_path, rgb_path, depth_path, c
                     templates, masks_cropped[:, 0, :, :]
                 ).unsqueeze(0).data
     
+    print('Template processing time:', time.time()-start_time)
+
     print ('Inference starting')
     start_time = time.time()
 
