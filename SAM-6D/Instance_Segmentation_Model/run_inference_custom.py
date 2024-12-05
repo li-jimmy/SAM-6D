@@ -254,6 +254,7 @@ def run_inference(segmentor_model, output_dir, cad_path, rgb_path, depth_path, c
     detections.add_attribute("appe_scores", appe_scores)
     #detections.add_attribute("geometric_score", geometric_score)
     detections.add_attribute("visible_ratio", visible_ratio)
+    detections.add_attribute("best_template", best_template)
 
     detections.to_numpy()
     top5_idxs = np.argsort(detections.scores)[-5:][::-1]
@@ -272,6 +273,9 @@ def run_inference(segmentor_model, output_dir, cad_path, rgb_path, depth_path, c
         overlay_save_path = f"{save_path}_overlay_{i}.png"
         Image.fromarray(overlay).save(overlay_save_path)
 
+        best_template_path = os.path.join(template_dir, 'rgb_'+str(idx)+'.png')
+        shutil.copy(best_template_path, f"{save_path}_best_template_{i}.png")
+        
         print(' - Score', detections.scores[idx])
         print(' - Semantic score', detections.semantic_score[idx])
         print(' - Appearance score', detections.appe_scores[idx])

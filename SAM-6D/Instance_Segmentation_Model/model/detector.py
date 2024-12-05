@@ -257,10 +257,10 @@ class Instance_Segmentation_Model(pl.LightningModule):
             self.segmentor_model.model.setup_model(device=self.device, verbose=True)
         logging.info(f"Moving models to {self.device} done!")
 
-    def compute_semantic_score(self, proposal_decriptors):
+    def compute_semantic_score(self, proposal_descriptors):
         # compute matching scores for each proposals
         scores = self.matching_config.metric(
-            proposal_decriptors, self.ref_data["descriptors"]
+            proposal_descriptors, self.ref_data["descriptors"]
         )  # N_proposals x N_objects x N_templates
         if self.matching_config.aggregation_function == "mean":
             score_per_proposal_and_object = (
