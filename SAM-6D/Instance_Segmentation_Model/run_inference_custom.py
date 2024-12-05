@@ -257,12 +257,22 @@ def run_inference(segmentor_model, output_dir, cad_path, rgb_path, depth_path, c
     detections.add_attribute("best_template", best_template)
 
     detections.to_numpy()
-    top5_idxs = np.argsort(detections.scores)[-5:][::-1]
+    #top5_idxs = np.argsort(detections.scores)[-5:][::-1]
+    all_sorted_idxs = np.argsort(detections.scores)[::-1]
     print ('Inference finished')
     print ('Time taken:', time.time()-start_time)
     save_path = f"{output_dir}/sam6d_results/detection_ism"
-    for i, idx in enumerate(top5_idxs):
-        print('Idx', idx)
+    for i, idx in enumerate(all_sorted_idxs):
+        print('Rank', i, 'Idx', idx)
+        print(' - Score', detections.scores[idx])
+        print(' - Semantic score', detections.semantic_score[idx])
+        print(' - Appearance score', detections.appe_scores[idx])
+        #print(' - Geometric score', detections.geometric_score[idx])
+        print(' - Visible ratio', detections.visible_ratio[idx])
+        if detections.semantic_score[idx] < 0.5 or detections.visible_ratio[idx] < 0.5:
+            print(' - REJECTED')
+            continue
+        print(' - ACCEPTED')
         binary_mask = force_binary_mask(detections.masks[idx]).astype(np.uint8)
         mask_save_path = f"{save_path}_mask_{i}.png"
         Image.fromarray(binary_mask * 255).save(mask_save_path)
@@ -276,11 +286,6 @@ def run_inference(segmentor_model, output_dir, cad_path, rgb_path, depth_path, c
         best_template_path = os.path.join(template_dir, 'rgb_'+str(idx)+'.png')
         shutil.copy(best_template_path, f"{save_path}_best_template_{i}.png")
         
-        print(' - Score', detections.scores[idx])
-        print(' - Semantic score', detections.semantic_score[idx])
-        print(' - Appearance score', detections.appe_scores[idx])
-        #print(' - Geometric score', detections.geometric_score[idx])
-        print(' - Visible ratio', detections.visible_ratio[idx])
 
         # vis_img = visualize_one(rgb, binary_mask, f"{save_path}_{i}.png")
         # vis_img.save(f"{save_path}_{i}.png")
