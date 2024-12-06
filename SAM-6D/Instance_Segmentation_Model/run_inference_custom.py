@@ -283,7 +283,7 @@ def run_inference(segmentor_model, output_dir, cad_path, rgb_path, depth_path, c
         overlay_save_path = f"{save_path}_overlay_{i}.png"
         Image.fromarray(overlay).save(overlay_save_path)
 
-        best_template_path = os.path.join(template_dir, 'rgb_'+str(idx)+'.png')
+        best_template_path = os.path.join(template_dir, 'rgb_'+str(detections.best_template[idx])+'.png')
         shutil.copy(best_template_path, f"{save_path}_best_template_{i}.png")
         
 
