@@ -248,6 +248,7 @@ class DinoVisionTransformer(nn.Module):
         return output
 
     def forward_features(self, x, masks=None):
+        import ipdb; ipdb.set_trace()
         if isinstance(x, list):
             return self.forward_features_list(x, masks)
 

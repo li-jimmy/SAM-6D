@@ -1,4 +1,5 @@
 import asyncio
+import base64
 from contextlib import asynccontextmanager
 import io
 import os
@@ -24,6 +25,7 @@ from fastapi import FastAPI, File, UploadFile
 from hypercorn.config import Config
 from hypercorn.asyncio import serve
 import httpx
+from fastapi.responses import StreamingResponse
 
 # set level logging
 logging.basicConfig(level=logging.WARN)
@@ -121,19 +123,21 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-@app.post("/segment_and_register/")
-async def predict(rgb: UploadFile = File(...), depth: UploadFile = File(...)):
+def segment(rgb_array):
+    torch.cuda.synchronize()
+    start_time0 = time.time()
     start_time = time.time()
-
-    rgb_bytes = await rgb.read()
-    depth_bytes = await depth.read()
-    rgb_array = cv2.imdecode(np.frombuffer(rgb_bytes, np.uint8), cv2.IMREAD_UNCHANGED)
-    rgb_array = cv2.cvtColor(rgb_array, cv2.COLOR_BGR2RGB)
-    
     detections = model.segmentor_model.generate_masks(rgb_array)
     detections = Detections(detections)
+    torch.cuda.synchronize()
+    print('Segmentation took:', time.time()-start_time)
+    
+    start_time = time.time()
     query_decriptors, query_appe_descriptors = model.descriptor_model.forward(rgb_array, detections)
-
+    torch.cuda.synchronize()
+    print('Descriptor computation took:', time.time()-start_time)
+    
+    start_time = time.time()
     # matching descriptors
     (
         idx_selected_proposals,
@@ -141,13 +145,18 @@ async def predict(rgb: UploadFile = File(...), depth: UploadFile = File(...)):
         semantic_score,
         best_template,
     ) = model.compute_semantic_score(query_decriptors)
-
+    torch.cuda.synchronize()
+    print('Semantic scoring took:', time.time()-start_time)
+    
     # update detections
     detections.filter(idx_selected_proposals)
     query_appe_descriptors = query_appe_descriptors[idx_selected_proposals, :]
 
+    start_time = time.time()
     # compute the appearance score
     appe_scores, ref_aux_descriptor= model.compute_appearance_score(best_template, pred_idx_objects, query_appe_descriptors)
+    torch.cuda.synchronize()
+    print('Appearance scoring took:', time.time()-start_time)
 
     # compute the geometric score
     # batch = batch_input_data(depth_path, cam_path, device)
@@ -165,8 +174,10 @@ async def predict(rgb: UploadFile = File(...), depth: UploadFile = File(...)):
     # geometric_score, visible_ratio = model.compute_geometric_score(
     #     image_uv, detections, query_appe_descriptors, ref_aux_descriptor, visible_thred=model.visible_thred
     #     )
+    start_time = time.time()
     visible_ratio = model.compute_visible_ratio(query_appe_descriptors, ref_aux_descriptor, visible_thred=model.visible_thred)
-
+    torch.cuda.synchronize()
+    print('Visibility ratio took:', time.time()-start_time)
     # final score
     #final_score = (semantic_score + appe_scores + geometric_score*visible_ratio) / (1 + 1 + visible_ratio)
     final_score = (semantic_score + appe_scores) * visible_ratio
@@ -182,17 +193,13 @@ async def predict(rgb: UploadFile = File(...), depth: UploadFile = File(...)):
 
     detections.to_numpy()
     all_sorted_idxs = np.argsort(detections.scores)[::-1]
-    print ('Inference took:', time.time()-start_time)
+    print ('Overall inference took:', time.time()-start_time0)
     
     for i, idx in enumerate(all_sorted_idxs):
         if detections.semantic_score[idx] < 0.5 or detections.visible_ratio[idx] < 0.5:
             continue
         
         binary_mask = force_binary_mask(detections.masks[idx]).astype(np.uint8)
-        mask_image = Image.fromarray(binary_mask * 255)
-        mask_bytes = io.BytesIO()
-        mask_image.save(mask_bytes, format='PNG')
-        mask_bytes.seek(0)
         
         if args.debug_dir is not None:
             save_path = os.path.join(args.debug_dir, 'detection_ism')
@@ -206,7 +213,40 @@ async def predict(rgb: UploadFile = File(...), depth: UploadFile = File(...)):
             Image.fromarray(overlay).save(overlay_save_path)
             best_template_path = os.path.join(args.template_path, 'rgb_'+str(detections.best_template[idx])+'.png')
             shutil.copy(best_template_path, f"{save_path}_best_template.png")
-            
+        
+        return binary_mask
+    return None
+
+@app.post("/segment/")
+async def segment_endpoint(rgb: UploadFile = File(...)):
+    rgb_bytes = await rgb.read()
+    rgb_array = cv2.imdecode(np.frombuffer(rgb_bytes, np.uint8), cv2.IMREAD_UNCHANGED)
+    rgb_array = cv2.cvtColor(rgb_array, cv2.COLOR_BGR2RGB)
+    
+    binary_mask = segment(rgb_array)
+    if binary_mask is not None:
+        mask_image = Image.fromarray(binary_mask * 255)
+        mask_bytes = io.BytesIO()
+        mask_image.save(mask_bytes, format='PNG')
+        mask_bytes.seek(0)
+        return StreamingResponse(mask_bytes, media_type="image/png")
+    return {'success': False, 'details': 'No object detected'}
+
+@app.post("/segment_and_register/")
+async def segment_and_register_endpoint(rgb: UploadFile = File(...), depth: UploadFile = File(...)):
+
+    rgb_bytes = await rgb.read()
+    depth_bytes = await depth.read()
+    rgb_array = cv2.imdecode(np.frombuffer(rgb_bytes, np.uint8), cv2.IMREAD_UNCHANGED)
+    rgb_array = cv2.cvtColor(rgb_array, cv2.COLOR_BGR2RGB)
+    
+    binary_mask = segment(rgb_array)
+    if binary_mask is not None:
+        mask_image = Image.fromarray(binary_mask * 255)
+        mask_bytes = io.BytesIO()
+        mask_image.save(mask_bytes, format='PNG')
+        mask_bytes.seek(0)
+        
         files = {
             "rgb": ("rgb_image.png", rgb_bytes, "image/png"),
             "depth": ("depth_image.png", depth_bytes, "image/png"),

@@ -1,3 +1,4 @@
+import time
 import torch
 import torch.nn.functional as F
 import torchvision.transforms as T
@@ -227,23 +228,42 @@ class CustomDINOv2(pl.LightningModule):
     @torch.no_grad()
     def forward(self, image_np, proposals):
         # with preprocess
+        torch.cuda.synchronize()
+        start_time = time.time()
         processed_rgbs = self.process_rgb_proposals(
             image_np, proposals.masks, proposals.boxes
         )
+        torch.cuda.synchronize()
+        print(f"Dino 1: {time.time() - start_time}")
+        
+        start_time = time.time()
         processed_masks = self.process_masks_proposals(proposals.masks, proposals.boxes)
-
+        torch.cuda.synchronize()
+        print(f"Dino 2: {time.time() - start_time}")
+        
+        start_time = time.time()
         batch_rgbs = BatchedData(batch_size=self.chunk_size, data=processed_rgbs)
         batch_masks = BatchedData(batch_size=self.chunk_size, data=processed_masks)
         del processed_rgbs  # free memory
         del processed_masks
         cls_features = BatchedData(batch_size=self.chunk_size)
         patch_features = BatchedData(batch_size=self.chunk_size)
+        torch.cuda.synchronize()
+        print(f"Dino 3: {time.time() - start_time}")
+        
+        
         for idx_batch in range(len(batch_rgbs)):
+            start_time = time.time()
             cls_feats, patch_feats = self.compute_cls_and_patch_features(
                 batch_rgbs[idx_batch], batch_masks[idx_batch]
             )
+            torch.cuda.synchronize()
+            print(f"Dino batch {idx_batch} a: {time.time() - start_time}")
+            start_time = time.time()
             cls_features.cat(cls_feats)
             patch_features.cat(patch_feats)
+            torch.cuda.synchronize()
+            print(f"Dino batch {idx_batch} b: {time.time() - start_time}")
         
         return cls_features.data, patch_features.data
 

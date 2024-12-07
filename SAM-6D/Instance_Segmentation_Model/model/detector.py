@@ -258,10 +258,18 @@ class Instance_Segmentation_Model(pl.LightningModule):
         logging.info(f"Moving models to {self.device} done!")
 
     def compute_semantic_score(self, proposal_descriptors):
+        torch.cuda.synchronize()
+        semantic_score_start_time = time.time()
+        
+        start_time = time.time()
         # compute matching scores for each proposals
         scores = self.matching_config.metric(
             proposal_descriptors, self.ref_data["descriptors"]
         )  # N_proposals x N_objects x N_templates
+        torch.cuda.synchronize()
+        print(f"Compute idx selected proposals (part 1): {time.time()-start_time}s")
+        
+        start_time = time.time()
         if self.matching_config.aggregation_function == "mean":
             score_per_proposal_and_object = (
                 torch.sum(scores, dim=-1) / scores.shape[-1]
@@ -277,22 +285,47 @@ class Instance_Segmentation_Model(pl.LightningModule):
             )
         else:
             raise NotImplementedError
-
+        torch.cuda.synchronize()
+        print(f"Compute idx selected proposals (part 1.5): {time.time()-start_time}s")
+        
+        start_time = time.time()
         # assign each proposal to the object with highest scores
         score_per_proposal, assigned_idx_object = torch.max(
             score_per_proposal_and_object, dim=-1
         )  # N_query
-
-        idx_selected_proposals = torch.arange(
-            len(score_per_proposal), device=score_per_proposal.device
-        )[score_per_proposal > self.matching_config.confidence_thresh]
+        torch.cuda.synchronize()
+        print(f"Compute idx selected proposals (part 1.6): {time.time()-start_time}s")
+        
+        start_time = time.time()
+        criteria = score_per_proposal > self.matching_config.confidence_thresh
+        
+        proposal_arange = torch.arange(
+            score_per_proposal.shape[0], device=score_per_proposal.device
+        )
+        torch.cuda.synchronize()
+        print(f"Compute idx selected proposals (part 1.9): {time.time()-start_time}s")
+        
+        start_time = time.time()
+        idx_selected_proposals = proposal_arange[criteria]
+        #idx_selected_proposals = proposal_arange[torch.nonzero(criteria, as_tuple=True)]
+        torch.cuda.synchronize()
+        print(f"Compute idx selected proposals (part 2): {time.time()-start_time}s")
+        
+        
+        start_time = time.time()
         pred_idx_objects = assigned_idx_object[idx_selected_proposals]
         semantic_score = score_per_proposal[idx_selected_proposals]
-
+        torch.cuda.synchronize()
+        print(f"Compute idx selected proposals (part 3): {time.time()-start_time}s")
+        
+        start_time = time.time()
         # compute the best view of template
         flitered_scores = scores[idx_selected_proposals, ...]
         best_template = self.best_template_pose(flitered_scores, pred_idx_objects)
-
+        torch.cuda.synchronize()
+        print(f"Compute idx selected proposals (part 4): {time.time()-start_time}s")
+        
+        print(f"Compute semantic score entire function: {time.time()-semantic_score_start_time}s")
         return idx_selected_proposals, pred_idx_objects, semantic_score, best_template
 
     def compute_appearance_score(self, best_pose, pred_objects_idx, query_appe_descriptors):
