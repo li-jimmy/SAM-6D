@@ -287,7 +287,6 @@ class Instance_Segmentation_Model(pl.LightningModule):
             raise NotImplementedError
         torch.cuda.synchronize()
         print(f"Compute idx selected proposals (part 1.5): {time.time()-start_time}s")
-        
         start_time = time.time()
         # assign each proposal to the object with highest scores
         score_per_proposal, assigned_idx_object = torch.max(
@@ -327,6 +326,13 @@ class Instance_Segmentation_Model(pl.LightningModule):
         
         print(f"Compute semantic score entire function: {time.time()-semantic_score_start_time}s")
         return idx_selected_proposals, pred_idx_objects, semantic_score, best_template
+
+    def compute_view_dependent_appearance_score(self, pred_objects_idx, query_appe_descriptors):
+        """
+        Based on the best template, calculate appearance similarity indicated by appearance score
+        """
+        ref_appe_descriptors = self.ref_data["appe_descriptors"][pred_objects_idx[None, :], ...]
+        import ipdb; ipdb.set_trace()
 
     def compute_appearance_score(self, best_pose, pred_objects_idx, query_appe_descriptors):
         """

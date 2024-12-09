@@ -152,6 +152,10 @@ def segment(rgb_array):
     detections.filter(idx_selected_proposals)
     query_appe_descriptors = query_appe_descriptors[idx_selected_proposals, :]
 
+    # start_time = time.time()
+    # model.compute_view_dependent_appearance_score(pred_idx_objects, query_appe_descriptors)
+    # print('View-dependent appearance:', time.time()-start_time)
+    
     start_time = time.time()
     # compute the appearance score
     appe_scores, ref_aux_descriptor= model.compute_appearance_score(best_template, pred_idx_objects, query_appe_descriptors)
@@ -257,7 +261,9 @@ async def segment_and_register_endpoint(rgb: UploadFile = File(...), depth: Uplo
 
         # Check and print the response
         if response.status_code == 200:
-            return response.json()
+            resp = response.json()
+            resp['success'] = True
+            return resp
         else:
             return {'success': False, 'details': 'Pose estimation failed'}
     return {'success': False, 'details': 'No object detected'}
