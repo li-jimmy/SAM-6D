@@ -1,3 +1,4 @@
+import cv2
 import torch
 import torchvision.transforms as T
 from tqdm import tqdm
@@ -20,7 +21,7 @@ from model.loss import MaskedPatch_MatrixSimilarity
 from utils.trimesh_utils import depth_image_to_pointcloud_translate_torch
 from utils.poses.pose_utils import get_obj_poses_from_template_level
 from utils.bbox_utils import xyxy_to_xywh, compute_iou
-
+from scipy.spatial.transform import Rotation
 
 class Instance_Segmentation_Model(pl.LightningModule):
     def __init__(
@@ -206,6 +207,72 @@ class Instance_Segmentation_Model(pl.LightningModule):
 
         return best_template_idx
 
+    def project_templates(self):
+        cam_poses = self.ref_data["cam_poses"].copy()
+        obj_poses = []
+        for cam_pose in cam_poses:
+            cam_pose[:3, 1:3] = -cam_pose[:3, 1:3]
+            obj_poses.append(np.linalg.inv(cam_pose))
+        # cam_poses = torch.tensor(cam_poses, dtype=torch.float32).to('cuda')
+        # obj_poses = torch.tensor(obj_poses, dtype=torch.float32).to('cuda')
+        obj_poses = np.array(obj_poses)
+        pose_R_blender = obj_poses[:, 0:3, 0:3]
+        #pose_R[:3, 1:3] = -pose_R[:3, 1:3]
+        # Convert Blender's coordinate system to OpenCV's coordinate system
+        # Blender: +X right, +Y forward, +Z up
+        # OpenCV: +X right, +Y down, +Z forward
+        blender_to_opencv = np.array([
+            [1, 0, 0],
+            [0, -1, 0],
+            [0, 0, -1]
+        ])
+        pose_R = blender_to_opencv @ pose_R_blender @ blender_to_opencv
+        import ipdb; ipdb.set_trace()
+        pose_R = torch.tensor(pose_R, dtype=torch.float32).to('cuda')
+        # rotation_matrix = torch.tensor(
+        #     Rotation.from_euler('xyz', [90, 0, 0], degrees=True).as_matrix(),
+        #     dtype=torch.float32
+        # ).to(pose_R.device)
+
+        #pose_R = torch.matmul(rotation_matrix, pose_R)
+        
+        # pose_R = torch.tensor([
+        #     [[1.0000,  0.0000,  0.0000],
+        #     [ 0.0000, 1.0000,  0.0000],
+        #     [ 0.0000,  0.0000,  1.0000]],
+        #     Rotation.from_euler('xyz', [45, 0, 0], degrees=True).as_matrix(),
+        #     Rotation.from_euler('xyz', [0, 45, 0], degrees=True).as_matrix(),
+        #     Rotation.from_euler('xyz', [0, 0, 45], degrees=True).as_matrix(),
+        #     Rotation.from_euler('zyx', [90, 45, 45], degrees=True).as_matrix(),
+        # ], dtype=torch.float32).to('cuda')
+        
+        
+        N_poses = pose_R.shape[0]
+        select_pc = self.ref_data["pointcloud"][0].unsqueeze(0).repeat(N_poses, 1, 1)
+        (N_query, N_pointcloud, _) = select_pc.shape
+        posed_pc = torch.matmul(pose_R, select_pc.permute(0, 2, 1)).permute(0, 2, 1)
+        translate = torch.tensor([ 0, 0,  0.4554]).repeat(N_poses, 1).to('cuda')
+        posed_pc = posed_pc + translate[:, None, :].repeat(1, N_pointcloud, 1)
+        cam_intrinsic = torch.tensor([[
+            [1.5450e+03, 0.0000e+00, 9.8007e+02],
+            [0.0000e+00, 1.5446e+03, 5.1264e+02],
+            [0.0000e+00, 0.0000e+00, 1.0000e+00]]],
+        dtype=torch.float64).to('cuda')
+        cam_instrinsic = cam_intrinsic[0][None, ...].repeat(N_query, 1, 1).to(torch.float32)
+        image_homo = torch.bmm(cam_instrinsic, posed_pc.permute(0, 2, 1)).permute(0, 2, 1)
+        image_vu = (image_homo / image_homo[:, :, -1][:, :, None])[:, :, 0:2].to(torch.int) # N_query x N_pointcloud x 2
+        (imageH, imageW) = (1080, 1920)
+        image_vu[:, :, 0].clamp_(min=0, max=imageW - 1)
+        image_vu[:, :, 1].clamp_(min=0, max=imageH - 1)
+        
+        for i in range(len(image_vu)):
+            vis_pc = np.zeros((1080, 1920, 3), dtype=np.uint8)
+            image_uv1 = image_vu[i]
+            for point in image_uv1:
+                x, y = int(point[0]), int(point[1])
+                cv2.circle(vis_pc, (x, y), radius=3, color=(0, 255, 0), thickness=-1)
+            cv2.imwrite(f"debug/vis_template_pose/template_{i}.png", vis_pc)
+        
     def project_template_to_image(self, best_pose, pred_object_idx, batch, proposals):
         """
         Obtain the RT of the best template, then project the reference pointclouds to query image, 
@@ -220,7 +287,6 @@ class Instance_Segmentation_Model(pl.LightningModule):
         posed_pc = torch.matmul(pose_R, select_pc.permute(0, 2, 1)).permute(0, 2, 1)
         translate = self.Calculate_the_query_translation(proposals, batch["depth"][0], batch["cam_intrinsic"][0], batch['depth_scale'])
         posed_pc = posed_pc + translate[:, None, :].repeat(1, N_pointcloud, 1)
-
         # project the pointcloud to the image
         cam_instrinsic = batch["cam_intrinsic"][0][None, ...].repeat(N_query, 1, 1).to(torch.float32)
         image_homo = torch.bmm(cam_instrinsic, posed_pc.permute(0, 2, 1)).permute(0, 2, 1)
@@ -327,13 +393,6 @@ class Instance_Segmentation_Model(pl.LightningModule):
         print(f"Compute semantic score entire function: {time.time()-semantic_score_start_time}s")
         return idx_selected_proposals, pred_idx_objects, semantic_score, best_template
 
-    def compute_view_dependent_appearance_score(self, pred_objects_idx, query_appe_descriptors):
-        """
-        Based on the best template, calculate appearance similarity indicated by appearance score
-        """
-        ref_appe_descriptors = self.ref_data["appe_descriptors"][pred_objects_idx[None, :], ...]
-        import ipdb; ipdb.set_trace()
-
     def compute_appearance_score(self, best_pose, pred_objects_idx, query_appe_descriptors):
         """
         Based on the best template, calculate appearance similarity indicated by appearance score
@@ -346,6 +405,18 @@ class Instance_Segmentation_Model(pl.LightningModule):
 
         return appe_scores, ref_appe_descriptors
 
+    def estimate_orientation(self, pred_objects_idx, query_appe_descriptor):
+        """
+        Based on the best template, calculate appearance similarity indicated by appearance score
+        """
+        ref_appe_descriptors = self.ref_data["appe_descriptors"][pred_objects_idx]
+        similarity_scores = torch.nn.functional.cosine_similarity(
+            ref_appe_descriptors, query_appe_descriptor.unsqueeze(0), dim=-1
+        )
+        mean_similarity_scores = similarity_scores.mean(dim=-1)
+        best_template_idx = torch.argmax(mean_similarity_scores)
+        return int(best_template_idx)
+        
     def compute_geometric_score(self, image_uv, proposals, appe_descriptors, ref_aux_descriptor, visible_thred=0.5):
 
         aux_metric = MaskedPatch_MatrixSimilarity(metric="cosine", chunk_size=64)
@@ -355,7 +426,7 @@ class Instance_Segmentation_Model(pl.LightningModule):
         y1x1 = torch.min(image_uv, dim=1).values
         y2x2 = torch.max(image_uv, dim=1).values
         xyxy = torch.concatenate((y1x1, y2x2), dim=-1)
-
+        
         iou = compute_iou(xyxy, proposals.boxes)
 
         return iou, visible_ratio

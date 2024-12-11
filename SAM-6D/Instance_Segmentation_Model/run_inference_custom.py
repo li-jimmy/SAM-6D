@@ -226,21 +226,22 @@ def run_inference(segmentor_model, output_dir, cad_path, rgb_path, depth_path, c
     appe_scores, ref_aux_descriptor= model.compute_appearance_score(best_template, pred_idx_objects, query_appe_descriptors)
 
     # compute the geometric score
-    # batch = batch_input_data(depth_path, cam_path, device)
-    # template_poses = get_obj_poses_from_template_level(level=2, pose_distribution="all")
-    # template_poses[:, :3, 3] *= 0.4
-    # poses = torch.tensor(template_poses).to(torch.float32).to(device)
-    # model.ref_data["poses"] =  poses[load_index_level_in_level2(0, "all"), :, :]
-
-    # mesh = trimesh.load_mesh(cad_path)
-    # model_points = mesh.sample(2048).astype(np.float32) / 1000.0
-    # model.ref_data["pointcloud"] = torch.tensor(model_points).unsqueeze(0).data.to(device)
+    batch = batch_input_data(depth_path, cam_path, device)
+    template_poses = get_obj_poses_from_template_level(level=2, pose_distribution="all")
+    template_poses[:, :3, 3] *= 0.4
+    poses = torch.tensor(template_poses).to(torch.float32).to(device)
+    model.ref_data["poses"] =  poses[load_index_level_in_level2(0, "all"), :, :]
+    model.ref_data["cam_poses"] = np.load('../Instance_Segmentation_Model/utils/poses/predefined_poses/cam_poses_level0.npy')
+    mesh = trimesh.load_mesh(cad_path)
+    model_points = mesh.sample(2048).astype(np.float32) # / 1000.0
+    model.ref_data["pointcloud"] = torch.tensor(model_points).unsqueeze(0).data.to(device)
     detections.masks.squeeze_()
-    #image_uv = model.project_template_to_image(best_template, pred_idx_objects, batch, detections.masks)
-
-    # geometric_score, visible_ratio = model.compute_geometric_score(
-    #     image_uv, detections, query_appe_descriptors, ref_aux_descriptor, visible_thred=model.visible_thred
-    #     )
+    image_uv = model.project_template_to_image(best_template, pred_idx_objects, batch, detections.masks)
+    
+    model.project_templates()
+    geometric_score, visible_ratio = model.compute_geometric_score(
+        image_uv, detections, query_appe_descriptors, ref_aux_descriptor, visible_thred=model.visible_thred
+    )
     visible_ratio = model.compute_visible_ratio(query_appe_descriptors, ref_aux_descriptor, visible_thred=model.visible_thred)
 
     # final score
@@ -252,7 +253,7 @@ def run_inference(segmentor_model, output_dir, cad_path, rgb_path, depth_path, c
     
     detections.add_attribute("semantic_score", semantic_score)
     detections.add_attribute("appe_scores", appe_scores)
-    #detections.add_attribute("geometric_score", geometric_score)
+    detections.add_attribute("geometric_score", geometric_score)
     detections.add_attribute("visible_ratio", visible_ratio)
     detections.add_attribute("best_template", best_template)
 
@@ -263,15 +264,17 @@ def run_inference(segmentor_model, output_dir, cad_path, rgb_path, depth_path, c
     print ('Time taken:', time.time()-start_time)
     save_path = f"{output_dir}/sam6d_results/detection_ism"
     for i, idx in enumerate(all_sorted_idxs):
+        if detections.semantic_score[idx] < 0.5 or detections.visible_ratio[idx] < 0.5:
+            continue
         print('Rank', i, 'Idx', idx)
         print(' - Score', detections.scores[idx])
         print(' - Semantic score', detections.semantic_score[idx])
         print(' - Appearance score', detections.appe_scores[idx])
-        #print(' - Geometric score', detections.geometric_score[idx])
+        print(' - Geometric score', detections.geometric_score[idx])
         print(' - Visible ratio', detections.visible_ratio[idx])
-        if detections.semantic_score[idx] < 0.5 or detections.visible_ratio[idx] < 0.5:
-            print(' - REJECTED')
-            continue
+        print(' - Best template', detections.best_template[idx])
+        print(' - Best template pose', model.ref_data["poses"][detections.best_template[idx]])
+        
         print(' - ACCEPTED')
         binary_mask = force_binary_mask(detections.masks[idx]).astype(np.uint8)
         mask_save_path = f"{save_path}_mask_{i}.png"
@@ -282,10 +285,16 @@ def run_inference(segmentor_model, output_dir, cad_path, rgb_path, depth_path, c
         overlay = cv2.addWeighted(np.array(rgb), 1, inverted_mask_color, 0.8, 0)
         overlay_save_path = f"{save_path}_overlay_{i}.png"
         Image.fromarray(overlay).save(overlay_save_path)
-
+        
         best_template_path = os.path.join(template_dir, 'rgb_'+str(detections.best_template[idx])+'.png')
         shutil.copy(best_template_path, f"{save_path}_best_template_{i}.png")
         
+        vis_pc = cv2.cvtColor(np.array(rgb), cv2.COLOR_RGB2BGR)
+        image_uv1 = image_uv[idx]
+        for point in image_uv1:
+            x, y = int(point[0]), int(point[1])
+            cv2.circle(vis_pc, (x, y), radius=3, color=(0, 255, 0), thickness=-1)
+        cv2.imwrite(f"{save_path}_pc_{i}.png", vis_pc)
 
         # vis_img = visualize_one(rgb, binary_mask, f"{save_path}_{i}.png")
         # vis_img.save(f"{save_path}_{i}.png")
@@ -295,6 +304,7 @@ def run_inference(segmentor_model, output_dir, cad_path, rgb_path, depth_path, c
             print('Copying best mask to', args.rgb_path.replace('_color', '_mask'))
             shutil.copy(mask_save_path, args.rgb_path.replace('_color', '_mask'))
 
+        
 
     # detections.save_to_file(0, 0, 0, save_path, "Custom", return_results=False)
     # detections = convert_npz_to_json(idx=0, list_npz_paths=[save_path+".npz"])

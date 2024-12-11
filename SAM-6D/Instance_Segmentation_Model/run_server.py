@@ -25,13 +25,15 @@ from fastapi import FastAPI, File, UploadFile
 from hypercorn.config import Config
 from hypercorn.asyncio import serve
 import httpx
+from utils.inout import load_json
+import imageio
 from fastapi.responses import StreamingResponse
 
 # set level logging
 logging.basicConfig(level=logging.WARN)
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--segmentor_model", default='sam', help="The segmentor model in ISM")
+parser.add_argument("--segmentor_model", default='fastsam', help="The segmentor model in ISM")
 parser.add_argument("--debug_dir", required=False, help="Path to root directory of the output")
 parser.add_argument("--cad_path", required=True, help="Path to CAD(mm)")
 parser.add_argument("--template_path", required=True, help="Path to templates")
@@ -44,7 +46,18 @@ parser.add_argument('--port',
                     type=int,
                     default=48001)
 args = parser.parse_args()
-    
+
+def batch_input_data(depth_path, cam_path, device):
+    batch = {}
+    cam_info = load_json(cam_path)
+    depth = np.array(imageio.imread(depth_path)).astype(np.int32)
+    cam_K = np.array(cam_info['cam_K']).reshape((3, 3))
+    depth_scale = np.array(cam_info['depth_scale'])
+
+    batch["depth"] = torch.from_numpy(depth).unsqueeze(0).to(device)
+    batch["cam_intrinsic"] = torch.from_numpy(cam_K).unsqueeze(0).to(device)
+    batch['depth_scale'] = torch.from_numpy(depth_scale).unsqueeze(0).to(device)
+    return batch
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -151,16 +164,13 @@ def segment(rgb_array):
     # update detections
     detections.filter(idx_selected_proposals)
     query_appe_descriptors = query_appe_descriptors[idx_selected_proposals, :]
-
-    # start_time = time.time()
-    # model.compute_view_dependent_appearance_score(pred_idx_objects, query_appe_descriptors)
-    # print('View-dependent appearance:', time.time()-start_time)
     
     start_time = time.time()
     # compute the appearance score
     appe_scores, ref_aux_descriptor= model.compute_appearance_score(best_template, pred_idx_objects, query_appe_descriptors)
     torch.cuda.synchronize()
     print('Appearance scoring took:', time.time()-start_time)
+
 
     # compute the geometric score
     # batch = batch_input_data(depth_path, cam_path, device)
@@ -203,6 +213,10 @@ def segment(rgb_array):
         if detections.semantic_score[idx] < 0.5 or detections.visible_ratio[idx] < 0.5:
             continue
         
+        start_time = time.time()
+        best_ori_template = model.estimate_orientation(pred_idx_objects[idx], query_appe_descriptors[idx])
+        print('Orientation estimation took:', time.time()-start_time)
+    
         binary_mask = force_binary_mask(detections.masks[idx]).astype(np.uint8)
         
         if args.debug_dir is not None:
@@ -217,7 +231,9 @@ def segment(rgb_array):
             Image.fromarray(overlay).save(overlay_save_path)
             best_template_path = os.path.join(args.template_path, 'rgb_'+str(detections.best_template[idx])+'.png')
             shutil.copy(best_template_path, f"{save_path}_best_template.png")
-        
+            best_ori_template_path = os.path.join(args.template_path, 'rgb_'+str(best_ori_template)+'.png')
+            shutil.copy(best_ori_template_path, f"{save_path}_best_ori_template.png")
+            
         return binary_mask
     return None
 

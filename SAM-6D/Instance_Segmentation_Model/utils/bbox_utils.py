@@ -211,12 +211,10 @@ def compute_iou(bb_a, bb_b):
     # Width and height of the intersection rectangle.
     wh_inter = br_inter - tl_inter
 
-    if (wh_inter > 0).all():
-        area_inter = wh_inter[:, 0] * wh_inter[:, 1]
-        area_a = wh_a[:, 0] * wh_a[:, 1]
-        area_b = wh_b[:, 0] * wh_b[:, 1]
-        iou = area_inter / (area_a + area_b - area_inter)
-    else:
-        iou = 0.0
-    
+    area_inter = wh_inter[:, 0] * wh_inter[:, 1]
+    area_inter = torch.clamp(area_inter, min=0)
+    area_a = wh_a[:, 0] * wh_a[:, 1]
+    area_b = wh_b[:, 0] * wh_b[:, 1]
+    iou = area_inter / (area_a + area_b - area_inter)
+
     return iou

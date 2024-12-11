@@ -44,7 +44,9 @@ if args.normalize:
 else:
     scale = 1
 
-for idx, cam_pose in enumerate(cam_poses):
+cam_poses[0][:3,:3] = np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
+
+for idx, cam_pose in enumerate(cam_poses[:1]):
     
     bproc.clean_up()
 
