@@ -208,43 +208,26 @@ class Instance_Segmentation_Model(pl.LightningModule):
         return best_template_idx
 
     def project_templates(self):
-        cam_poses = self.ref_data["cam_poses"].copy()
-        obj_poses = []
-        for cam_pose in cam_poses:
-            cam_pose[:3, 1:3] = -cam_pose[:3, 1:3]
-            obj_poses.append(np.linalg.inv(cam_pose))
-        # cam_poses = torch.tensor(cam_poses, dtype=torch.float32).to('cuda')
-        # obj_poses = torch.tensor(obj_poses, dtype=torch.float32).to('cuda')
-        obj_poses = np.array(obj_poses)
-        pose_R_blender = obj_poses[:, 0:3, 0:3]
-        #pose_R[:3, 1:3] = -pose_R[:3, 1:3]
-        # Convert Blender's coordinate system to OpenCV's coordinate system
-        # Blender: +X right, +Y forward, +Z up
-        # OpenCV: +X right, +Y down, +Z forward
-        blender_to_opencv = np.array([
-            [1, 0, 0],
-            [0, -1, 0],
-            [0, 0, -1]
-        ])
-        pose_R = blender_to_opencv @ pose_R_blender @ blender_to_opencv
-        import ipdb; ipdb.set_trace()
-        pose_R = torch.tensor(pose_R, dtype=torch.float32).to('cuda')
-        # rotation_matrix = torch.tensor(
-        #     Rotation.from_euler('xyz', [90, 0, 0], degrees=True).as_matrix(),
-        #     dtype=torch.float32
-        # ).to(pose_R.device)
-
-        #pose_R = torch.matmul(rotation_matrix, pose_R)
-        
-        # pose_R = torch.tensor([
-        #     [[1.0000,  0.0000,  0.0000],
-        #     [ 0.0000, 1.0000,  0.0000],
-        #     [ 0.0000,  0.0000,  1.0000]],
-        #     Rotation.from_euler('xyz', [45, 0, 0], degrees=True).as_matrix(),
-        #     Rotation.from_euler('xyz', [0, 45, 0], degrees=True).as_matrix(),
-        #     Rotation.from_euler('xyz', [0, 0, 45], degrees=True).as_matrix(),
-        #     Rotation.from_euler('zyx', [90, 45, 45], degrees=True).as_matrix(),
-        # ], dtype=torch.float32).to('cuda')
+        pose_R = torch.tensor([
+            # [[1.0000,  0.0000,  0.0000],
+            # [ 0.0000, 1.0000,  0.0000],
+            # [ 0.0000,  0.0000,  1.0000]],
+            # Rotation.from_euler('xyz', [45, 0, 0], degrees=True).as_matrix(),
+            # Rotation.from_euler('xyz', [0, 45, 0], degrees=True).as_matrix(),
+            # Rotation.from_euler('xyz', [0, 0, 45], degrees=True).as_matrix(),
+            # Rotation.from_euler('zyx', [90, 45, 45], degrees=True).as_matrix(),
+            [[ 0.8506508,  0.5257311,  0.],
+            [ 0.       ,  0.       ,  1.],
+            [ 0.5257311, -0.8506508, -0.]],
+            
+            [[ 4.2532539e-01,  2.6286554e-01,  8.6602539e-01],
+            [-7.3668522e-01, -4.5529649e-01,  5.0000000e-01],
+            [ 5.2573109e-01, -8.5065079e-01, -4.7220605e-17]],
+            
+            [[-0.4253254 , -0.26286554, -0.8660254 ],
+       [ 0.7366852 ,  0.4552965 , -0.5       ],
+       [ 0.5257311 , -0.8506508 , -0.        ]]
+        ], dtype=torch.float32).to('cuda')
         
         
         N_poses = pose_R.shape[0]
@@ -271,7 +254,7 @@ class Instance_Segmentation_Model(pl.LightningModule):
             for point in image_uv1:
                 x, y = int(point[0]), int(point[1])
                 cv2.circle(vis_pc, (x, y), radius=3, color=(0, 255, 0), thickness=-1)
-            cv2.imwrite(f"debug/vis_template_pose/template_{i}.png", vis_pc)
+            cv2.imwrite(f"debug/vis_custom_pose/template_{i}.png", vis_pc)
         
     def project_template_to_image(self, best_pose, pred_object_idx, batch, proposals):
         """

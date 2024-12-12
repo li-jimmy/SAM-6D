@@ -61,7 +61,7 @@ def batch_input_data(depth_path, cam_path, device):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global model, http_client
+    global model, http_client, tmpl_poses
     http_client = httpx.Client(http2=True, verify=False)  # `verify=False` for self-signed certificates
 
     with initialize(version_base=None, config_path="configs"):
@@ -94,12 +94,14 @@ async def lifespan(app: FastAPI):
         
     logging.info("Initializing template")
     start_time = time.time()
-    num_templates = len(glob.glob(os.path.join(args.template_path, "*.npy")))
+    num_templates = len(glob.glob(os.path.join(args.template_path, "pose_*.txt")))
     print(' - Num templates:', num_templates)
-    boxes, masks, templates = [], [], []
+    boxes, masks, templates, tmpl_poses = [], [], [], []
     for idx in range(num_templates):
         image = Image.open(os.path.join(args.template_path, 'rgb_'+str(idx)+'.png'))
         mask = Image.open(os.path.join(args.template_path, 'mask_'+str(idx)+'.png'))
+        pose = np.loadtxt(os.path.join(args.template_path, 'pose_'+str(idx)+'.txt'))
+        tmpl_poses.append(pose)
         boxes.append(mask.getbbox())
 
         image = torch.from_numpy(np.array(image.convert("RGB")) / 255).float()
@@ -111,6 +113,7 @@ async def lifespan(app: FastAPI):
     templates = torch.stack(templates).permute(0, 3, 1, 2)
     masks = torch.stack(masks).permute(0, 3, 1, 2)
     boxes = torch.tensor(np.array(boxes))
+    tmpl_poses = torch.stack([torch.tensor(pose) for pose in tmpl_poses])
     
     processing_config = OmegaConf.create(
         {
@@ -215,6 +218,9 @@ def segment(rgb_array):
         
         start_time = time.time()
         best_ori_template = model.estimate_orientation(pred_idx_objects[idx], query_appe_descriptors[idx])
+        best_ori_template_pose = tmpl_poses[best_ori_template]
+        print('Coarse pose estimate:')
+        print(best_ori_template_pose)
         print('Orientation estimation took:', time.time()-start_time)
     
         binary_mask = force_binary_mask(detections.masks[idx]).astype(np.uint8)

@@ -164,12 +164,14 @@ def run_inference(segmentor_model, output_dir, cad_path, rgb_path, depth_path, c
     logging.info("Initializing template")
     start_time = time.time()
     template_dir = args.template_path
-    num_templates = len(glob.glob(f"{template_dir}/*.npy"))
+    num_templates = len(glob.glob(f"{template_dir}/*.txt"))
     print(' - Num templates:', num_templates)
-    boxes, masks, templates = [], [], []
+    boxes, masks, templates, tmpl_poses = [], [], [], []
     for idx in range(num_templates):
         image = Image.open(os.path.join(template_dir, 'rgb_'+str(idx)+'.png'))
         mask = Image.open(os.path.join(template_dir, 'mask_'+str(idx)+'.png'))
+        pose = np.loadtxt(os.path.join(template_dir, 'pose_'+str(idx)+'.txt'))
+        tmpl_poses.append(pose)
         boxes.append(mask.getbbox())
 
         image = torch.from_numpy(np.array(image.convert("RGB")) / 255).float()
@@ -180,6 +182,7 @@ def run_inference(segmentor_model, output_dir, cad_path, rgb_path, depth_path, c
         
     templates = torch.stack(templates).permute(0, 3, 1, 2)
     masks = torch.stack(masks).permute(0, 3, 1, 2)
+    tmpl_poses = torch.stack([torch.tensor(pose) for pose in tmpl_poses])
     boxes = torch.tensor(np.array(boxes))
     
     processing_config = OmegaConf.create(
@@ -227,18 +230,18 @@ def run_inference(segmentor_model, output_dir, cad_path, rgb_path, depth_path, c
 
     # compute the geometric score
     batch = batch_input_data(depth_path, cam_path, device)
-    template_poses = get_obj_poses_from_template_level(level=2, pose_distribution="all")
-    template_poses[:, :3, 3] *= 0.4
-    poses = torch.tensor(template_poses).to(torch.float32).to(device)
-    model.ref_data["poses"] =  poses[load_index_level_in_level2(0, "all"), :, :]
-    model.ref_data["cam_poses"] = np.load('../Instance_Segmentation_Model/utils/poses/predefined_poses/cam_poses_level0.npy')
+    # template_poses = get_obj_poses_from_template_level(level=2, pose_distribution="all")
+    # template_poses[:, :3, 3] *= 0.4
+    poses = torch.tensor(tmpl_poses).to(torch.float32).to(device)
+    #model.ref_data["poses"] =  poses[load_index_level_in_level2(0, "all"), :, :]
+    model.ref_data["poses"] = poses
+    #model.ref_data["cam_poses"] = np.load('../Instance_Segmentation_Model/utils/poses/predefined_poses/cam_poses_level0.npy')
     mesh = trimesh.load_mesh(cad_path)
     model_points = mesh.sample(2048).astype(np.float32) # / 1000.0
     model.ref_data["pointcloud"] = torch.tensor(model_points).unsqueeze(0).data.to(device)
     detections.masks.squeeze_()
     image_uv = model.project_template_to_image(best_template, pred_idx_objects, batch, detections.masks)
     
-    model.project_templates()
     geometric_score, visible_ratio = model.compute_geometric_score(
         image_uv, detections, query_appe_descriptors, ref_aux_descriptor, visible_thred=model.visible_thred
     )
