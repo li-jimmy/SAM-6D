@@ -2,6 +2,7 @@ import asyncio
 import base64
 from contextlib import asynccontextmanager
 import io
+import json
 import os
 import numpy as np
 import shutil
@@ -210,7 +211,6 @@ def segment(rgb_array):
 
     detections.to_numpy()
     all_sorted_idxs = np.argsort(detections.scores)[::-1]
-    print ('Overall inference took:', time.time()-start_time0)
     
     for i, idx in enumerate(all_sorted_idxs):
         if detections.semantic_score[idx] < 0.5 or detections.visible_ratio[idx] < 0.5:
@@ -224,6 +224,7 @@ def segment(rgb_array):
         print('Orientation estimation took:', time.time()-start_time)
     
         binary_mask = force_binary_mask(detections.masks[idx]).astype(np.uint8)
+        print ('Overall inference took:', time.time()-start_time0)
         
         if args.debug_dir is not None:
             save_path = os.path.join(args.debug_dir, 'detection_ism')
@@ -240,7 +241,7 @@ def segment(rgb_array):
             best_ori_template_path = os.path.join(args.template_path, 'rgb_'+str(best_ori_template)+'.png')
             shutil.copy(best_ori_template_path, f"{save_path}_best_ori_template.png")
             
-        return binary_mask
+        return binary_mask, best_ori_template_pose.cpu().numpy().tolist()
     return None
 
 @app.post("/segment/")
@@ -249,7 +250,7 @@ async def segment_endpoint(rgb: UploadFile = File(...)):
     rgb_array = cv2.imdecode(np.frombuffer(rgb_bytes, np.uint8), cv2.IMREAD_UNCHANGED)
     rgb_array = cv2.cvtColor(rgb_array, cv2.COLOR_BGR2RGB)
     
-    binary_mask = segment(rgb_array)
+    binary_mask, pose_estimate = segment(rgb_array)
     if binary_mask is not None:
         mask_image = Image.fromarray(binary_mask * 255)
         mask_bytes = io.BytesIO()
@@ -266,7 +267,7 @@ async def segment_and_register_endpoint(rgb: UploadFile = File(...), depth: Uplo
     rgb_array = cv2.imdecode(np.frombuffer(rgb_bytes, np.uint8), cv2.IMREAD_UNCHANGED)
     rgb_array = cv2.cvtColor(rgb_array, cv2.COLOR_BGR2RGB)
     
-    binary_mask = segment(rgb_array)
+    binary_mask, pose_estimate = segment(rgb_array)
     if binary_mask is not None:
         mask_image = Image.fromarray(binary_mask * 255)
         mask_bytes = io.BytesIO()
@@ -279,7 +280,8 @@ async def segment_and_register_endpoint(rgb: UploadFile = File(...), depth: Uplo
             "mask": ("mask_image.png", mask_bytes, "image/png")
         }
         
-        response = http_client.post(args.pose_server, files=files)
+        pose_estimate_str = json.dumps(pose_estimate)
+        response = http_client.post(args.pose_server, files=files, data={'coarse_estimate': pose_estimate_str})
 
         # Check and print the response
         if response.status_code == 200:
@@ -287,6 +289,7 @@ async def segment_and_register_endpoint(rgb: UploadFile = File(...), depth: Uplo
             resp['success'] = True
             return resp
         else:
+            import ipdb; ipdb.set_trace()
             return {'success': False, 'details': 'Pose estimation failed'}
     return {'success': False, 'details': 'No object detected'}
 
