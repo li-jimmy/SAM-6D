@@ -241,7 +241,7 @@ def segment(rgb_array):
             best_ori_template_path = os.path.join(args.template_path, 'rgb_'+str(best_ori_template)+'.png')
             shutil.copy(best_ori_template_path, f"{save_path}_best_ori_template.png")
             
-        return binary_mask, best_ori_template_pose.cpu().numpy().tolist()
+        return binary_mask, best_ori_template_pose.cpu().numpy()
     return None
 
 @app.post("/segment/")
@@ -280,7 +280,8 @@ async def segment_and_register_endpoint(rgb: UploadFile = File(...), depth: Uplo
             "mask": ("mask_image.png", mask_bytes, "image/png")
         }
         
-        pose_estimate_str = json.dumps(pose_estimate)
+        pose_estimate_str = json.dumps(pose_estimate.tolist())
+        
         response = http_client.post(args.pose_server, files=files, data={'coarse_estimate': pose_estimate_str})
 
         # Check and print the response
@@ -289,12 +290,10 @@ async def segment_and_register_endpoint(rgb: UploadFile = File(...), depth: Uplo
             resp['success'] = True
             return resp
         else:
-            import ipdb; ipdb.set_trace()
             return {'success': False, 'details': 'Pose estimation failed'}
     return {'success': False, 'details': 'No object detected'}
 
 if __name__ == "__main__":
-    #uvicorn.run(app, host=args.ip, port=args.port)
     config = Config()
     config.bind = [f"{args.ip}:{args.port}"] 
     config.http2 = True
