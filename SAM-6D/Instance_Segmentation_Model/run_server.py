@@ -148,7 +148,7 @@ def segment(rgb_array):
     detections = Detections(detections)
     torch.cuda.synchronize()
     print('Segmentation took:', time.time()-start_time)
-    
+    print('Number of raw segments:', len(detections))
     start_time = time.time()
     query_decriptors, query_appe_descriptors = model.descriptor_model.forward(rgb_array, detections)
     torch.cuda.synchronize()
@@ -224,7 +224,7 @@ def segment(rgb_array):
         print('Orientation estimation took:', time.time()-start_time)
     
         binary_mask = force_binary_mask(detections.masks[idx]).astype(np.uint8)
-        print ('Overall inference took:', time.time()-start_time0)
+        print ('Instance segmentation total time:', time.time()-start_time0)
         
         if args.debug_dir is not None:
             save_path = os.path.join(args.debug_dir, 'detection_ism')
@@ -261,7 +261,7 @@ async def segment_endpoint(rgb: UploadFile = File(...)):
 
 @app.post("/segment_and_register/")
 async def segment_and_register_endpoint(rgb: UploadFile = File(...), depth: UploadFile = File(...)):
-
+    start_time = time.time()
     rgb_bytes = await rgb.read()
     depth_bytes = await depth.read()
     rgb_array = cv2.imdecode(np.frombuffer(rgb_bytes, np.uint8), cv2.IMREAD_UNCHANGED)
@@ -288,6 +288,7 @@ async def segment_and_register_endpoint(rgb: UploadFile = File(...), depth: Uplo
         if response.status_code == 200:
             resp = response.json()
             resp['success'] = True
+            print('Segment and register total time:', time.time()-start_time)
             return resp
         else:
             return {'success': False, 'details': 'Pose estimation failed'}
