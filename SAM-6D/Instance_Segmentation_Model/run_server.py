@@ -140,12 +140,32 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-def segment(rgb_array):
+def depth_filter(detections, depth_array):
+    depth_array = depth_array.astype(np.float64) / 1000.0
+    depth_array[(depth_array<0.001) | (depth_array>=np.inf)] = 0
+    avg_depth_values = []
+    for det_i in range(len(detections.masks)):
+        mask = detections.masks[det_i]
+        binary_mask = force_binary_mask(mask)
+        depth_values = depth_array[binary_mask]
+        non_zero_depths = depth_values[depth_values > 0]
+        if len(non_zero_depths) > 0:
+            average_depth = np.mean(non_zero_depths)
+            avg_depth_values.append(average_depth)
+        else:
+            avg_depth_values.append(np.inf)
+    
+    import ipdb; ipdb.set_trace()
+    return detections
+
+def segment(rgb_array, depth_array=None):
     torch.cuda.synchronize()
     start_time0 = time.time()
     start_time = time.time()
     detections = model.segmentor_model.generate_masks(rgb_array)
     detections = Detections(detections)
+    if depth_array is not None:
+        detections = depth_filter(detections, depth_array)
     torch.cuda.synchronize()
     print('Segmentation took:', time.time()-start_time)
     print('Number of raw segments:', len(detections))
@@ -266,8 +286,9 @@ async def segment_and_register_endpoint(rgb: UploadFile = File(...), depth: Uplo
     depth_bytes = await depth.read()
     rgb_array = cv2.imdecode(np.frombuffer(rgb_bytes, np.uint8), cv2.IMREAD_UNCHANGED)
     rgb_array = cv2.cvtColor(rgb_array, cv2.COLOR_BGR2RGB)
+    depth_array = cv2.imdecode(np.frombuffer(depth_bytes, np.uint8), cv2.IMREAD_UNCHANGED)
     
-    binary_mask, pose_estimate = segment(rgb_array)
+    binary_mask, pose_estimate = segment(rgb_array, depth_array)
     if binary_mask is not None:
         mask_image = Image.fromarray(binary_mask * 255)
         mask_bytes = io.BytesIO()
