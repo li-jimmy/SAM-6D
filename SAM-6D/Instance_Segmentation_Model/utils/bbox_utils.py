@@ -191,6 +191,10 @@ def force_binary_mask(mask, threshold=0.):
     mask = np.where(mask > threshold, 1, 0)
     return mask
 
+def force_binary_mask_torch(mask, threshold=0.):
+    mask = torch.where(mask > threshold, torch.tensor(1, dtype=mask.dtype), torch.tensor(0, dtype=mask.dtype))
+    return mask
+
 def get_bbox_area(bbox):
     return (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
 

@@ -21,7 +21,7 @@ import cv2
 from model.detector import Instance_Segmentation_Model
 from utils.bbox_utils import CropResizePad
 from model.utils import Detections
-from utils.bbox_utils import force_binary_mask
+from utils.bbox_utils import force_binary_mask, force_binary_mask_torch
 from fastapi import FastAPI, File, UploadFile
 from hypercorn.config import Config
 from hypercorn.asyncio import serve
@@ -140,13 +140,15 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 
-def depth_filter(detections, depth_array):
+def depth_filter(detections, rgb_array, depth_array):
+    start_time = time.time()
     depth_array = depth_array.astype(np.float64) / 1000.0
     depth_array[(depth_array<0.001) | (depth_array>=np.inf)] = 0
     avg_depth_values = []
+    masks_np = detections.masks.cpu().numpy()
     for det_i in range(len(detections.masks)):
-        mask = detections.masks[det_i]
-        binary_mask = force_binary_mask(mask)
+        mask = masks_np[det_i]
+        binary_mask = force_binary_mask(mask).astype(bool)
         depth_values = depth_array[binary_mask]
         non_zero_depths = depth_values[depth_values > 0]
         if len(non_zero_depths) > 0:
@@ -154,21 +156,38 @@ def depth_filter(detections, depth_array):
             avg_depth_values.append(average_depth)
         else:
             avg_depth_values.append(np.inf)
-    
-    import ipdb; ipdb.set_trace()
+    print('Depth filtering took:', time.time()-start_time)
+    depth_sort = np.argsort(avg_depth_values)
+    for i, det_i in enumerate(depth_sort):
+        mask = masks_np[det_i]
+        binary_mask = force_binary_mask(mask).astype(np.uint8)
+        binary_mask_save_path = f"{args.debug_dir}/dist_sort/mask_{i}_{det_i}.png"
+        Image.fromarray(binary_mask * 255).save(binary_mask_save_path)
+        inverted_mask = 1 - binary_mask
+        inverted_mask_color = cv2.cvtColor(inverted_mask * 255, cv2.COLOR_GRAY2RGB)
+        overlay = cv2.addWeighted(rgb_array, 1, inverted_mask_color, 0.8, 0)
+        overlay_save_path = f"{args.debug_dir}/dist_sort/viz_{i}_{det_i}.png"
+        Image.fromarray(overlay).save(overlay_save_path)
     return detections
 
-def segment(rgb_array, depth_array=None):
+def size_filter(detections, min_size=10000):
+    binary_masks = force_binary_mask_torch(detections.masks)
+    mask_sizes = binary_masks.sum(dim=(1, 2))
+    selected_indices = (mask_sizes > min_size).nonzero(as_tuple=True)[0]
+    detections.filter(selected_indices)
+    return detections
+
+def segment(rgb_array):
     torch.cuda.synchronize()
     start_time0 = time.time()
     start_time = time.time()
     detections = model.segmentor_model.generate_masks(rgb_array)
     detections = Detections(detections)
-    if depth_array is not None:
-        detections = depth_filter(detections, depth_array)
     torch.cuda.synchronize()
     print('Segmentation took:', time.time()-start_time)
     print('Number of raw segments:', len(detections))
+    detections = size_filter(detections)
+    print('Number of segments after size filtering:', len(detections))
     start_time = time.time()
     query_decriptors, query_appe_descriptors = model.descriptor_model.forward(rgb_array, detections)
     torch.cuda.synchronize()
@@ -262,7 +281,7 @@ def segment(rgb_array, depth_array=None):
             shutil.copy(best_ori_template_path, f"{save_path}_best_ori_template.png")
             
         return binary_mask, best_ori_template_pose.cpu().numpy()
-    return None
+    return None, None
 
 @app.post("/segment/")
 async def segment_endpoint(rgb: UploadFile = File(...)):
@@ -286,9 +305,9 @@ async def segment_and_register_endpoint(rgb: UploadFile = File(...), depth: Uplo
     depth_bytes = await depth.read()
     rgb_array = cv2.imdecode(np.frombuffer(rgb_bytes, np.uint8), cv2.IMREAD_UNCHANGED)
     rgb_array = cv2.cvtColor(rgb_array, cv2.COLOR_BGR2RGB)
-    depth_array = cv2.imdecode(np.frombuffer(depth_bytes, np.uint8), cv2.IMREAD_UNCHANGED)
+    #depth_array = cv2.imdecode(np.frombuffer(depth_bytes, np.uint8), cv2.IMREAD_UNCHANGED)
     
-    binary_mask, pose_estimate = segment(rgb_array, depth_array)
+    binary_mask, pose_estimate = segment(rgb_array)
     if binary_mask is not None:
         mask_image = Image.fromarray(binary_mask * 255)
         mask_bytes = io.BytesIO()
