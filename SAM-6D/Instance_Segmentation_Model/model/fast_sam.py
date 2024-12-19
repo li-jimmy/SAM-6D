@@ -114,7 +114,8 @@ class FastSAM(object):
         if self.segmentor_width_size is not None:
             orig_size = image.shape[:2]
         detections = self.model(image)
-
+        if detections[0].masks is None:
+            import ipdb; ipdb.set_trace()
         masks = detections[0].masks.data
         boxes = detections[0].boxes.data[:, :4]  # two lasts:  confidence and class
 

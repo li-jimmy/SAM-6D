@@ -170,7 +170,7 @@ def depth_filter(detections, rgb_array, depth_array):
         Image.fromarray(overlay).save(overlay_save_path)
     return detections
 
-def size_filter(detections, min_size=10000):
+def size_filter(detections, min_size=30000):
     binary_masks = force_binary_mask_torch(detections.masks)
     mask_sizes = binary_masks.sum(dim=(1, 2))
     selected_indices = (mask_sizes > min_size).nonzero(as_tuple=True)[0]
@@ -322,7 +322,8 @@ async def segment_and_register_endpoint(rgb: UploadFile = File(...), depth: Uplo
         
         pose_estimate_str = json.dumps(pose_estimate.tolist())
         
-        response = http_client.post(args.pose_server, files=files, data={'coarse_estimate': pose_estimate_str})
+        #response = http_client.post(args.pose_server, files=files, data={'coarse_estimate': pose_estimate_str})
+        response = http_client.post(args.pose_server, files=files, data={'coarse_estimate': ''})
 
         # Check and print the response
         if response.status_code == 200:
